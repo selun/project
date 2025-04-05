@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>雀魂 AI 助手（增强版）</title>
+  <style>
+    /* 样式省略（保持不变） */
+  </style>
+</head>
+<body>
+
+<div style="padding: 1em;">
+  <h2>可选牌</h2>
+  <div id="tile-grid" style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 1em;"></div>
+
+  <h2>当前手牌 <span id="selected-count">0</span>/14</h2>
+  <div id="hand" style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 1em;"></div>
+
+  <h2>副露牌组</h2>
+  <div id="melds" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 1em;"></div>
+
+  <div style="margin: 1em 0;">
+    <button onclick="chiMeld()">吃</button>
+    <button onclick="ponMeld()">碰</button>
+    <button onclick="kanMeld()">杠</button>
+    <button onclick="resetAll()">一键初始化</button>
+    <button onclick="analyze()">分析</button>
+    <button onclick="analyzeAutomatically()">自动分析</button>
+    <button onclick="exportData()">导出</button>
+    <button onclick="importData()">导入</button>
+  </div>
+
+  <div id="results" style="padding: 1em; background: #f0f0f0; border-radius: 8px;"></div>
+</div>
+
+<script>
+const tiles = [
+  ...[...Array(9)].map((_, i) => `${i + 1}万`),
+  ...[...Array(9)].map((_, i) => `${i + 1}筒`),
+  ...[...Array(9)].map((_, i) => `${i + 1}索`),
+  '东', '南', '西', '北', '中', '发', '白'
+];
+const tileGrid = document.getElementById("tile-grid");
+const hand = document.getElementById("hand");
+const melds = document.getElementById("melds");
+const resultDiv = document.getElementById("results");
+const countSpan = document.getElementById("selected-count");
+let handTiles = [], meldGroups = [], autoAnalyze = false;
+
+function renderTiles() {
+  tileGrid.innerHTML = "";
+  tiles.forEach(tile => {
+    const count = handTiles.filter(t => t === tile).length;
+    const button = document.createElement("button");
+    button.textContent = tile;
+    button.disabled = handTiles.length >= 14;
+    button.onclick = () => {
+      if (handTiles.length < 14) {
+        handTiles.push(tile);
+        updateHand();
+      }
+    };
+    tileGrid.appendChild(button);
+  });
+}
+
+function updateHand() {
+  hand.innerHTML = "";
+  sortHand();
+  handTiles.forEach((tile, index) => {
+    const tileEl = document.createElement("div");
+    tileEl.className = "hand-tile";
+    tileEl.textContent = tile;
+    tileEl.onclick = () => {
+      handTiles.splice(index, 1);
+      updateHand();
+    };
+    hand.appendChild(tileEl);
+  });
+  countSpan.textContent = handTiles.length;
+  if (autoAnalyze) analyze();
+  renderTiles();
+}
+
+function sortHand() {
+  const order = tile => {
+    const map = {'万': 0, '筒': 1, '索': 2};
+    if (tile.length === 2) return map[tile[1]] * 10 + parseInt(tile[0]);
+    return 100 + ['东', '南', '西', '北', '中', '发', '白'].indexOf(tile);
+  };
+  handTiles.sort((a, b) => order(a) - order(b));
+}
+
+function toggleHand() {
+  const el = document.getElementById("hand-section");
+  el.classList.toggle("collapsed");
+}
+
+function toggleMelds() {
+  const el = document.getElementById("meld-section");
+  el.classList.toggle("collapsed");
+}
+
+function resetAll() {
+  handTiles = [];
+  meldGroups = [];
+  resultDiv.innerHTML = "";
+  updateHand();
+  updateMelds();
+}
+
+function chiMeld() {
+  if (handTiles.length < 3) return;
+  const meld = handTiles.splice(0, 3);
+  meldGroups.push(meld);
+  updateHand();
+  updateMelds();
+}
+
+function ponMeld() {
+  const meld = handTiles.splice(0, 3);
+  meldGroups.push(meld);
+  updateHand();
+  updateMelds();
+}
+
+function kanMeld() {
+  const meld = handTiles.splice(0, 4);
+  meldGroups.push(meld);
+  updateHand();
+  updateMelds();
+}
+
+function updateMelds() {
+  melds.innerHTML = "";
+  meldGroups.forEach((group, idx) => {
+    const div = document.createElement("div");
+    div.className = "meld-group";
+    group.forEach(tile => {
+      const tileEl = document.createElement("div");
+      tileEl.className = "meld-tile";
+      tileEl.textContent = tile;
+      div.appendChild(tileEl);
+    });
+    const delBtn = document.createElement("button");
+    delBtn.textContent = "删除";
+    delBtn.className = "delete-meld-btn";
+    delBtn.onclick = () => {
+      meldGroups.splice(idx, 1);
+      updateMelds();
+    };
+    div.appendChild(delBtn);
+    melds.appendChild(div);
+  });
+}
+
+function analyze() {
+  resultDiv.innerHTML = "<em>正在分析……</em>";
+  setTimeout(() => {
+    const counts = {};
+    handTiles.forEach(tile => counts[tile] = (counts[tile] || 0) + 1);
+    let suggestion = "建议打出：";
+    let minCount = 5, discard = null;
+    for (let t in counts) {
+      if (counts[t] < minCount) {
+        minCount = counts[t];
+        discard = t;
+      }
+    }
+
+    const shanten = calculateShanten(handTiles);
+    const yakuList = detectYaku(handTiles);
+
+    resultDiv.innerHTML = discard
+      ? `${suggestion}<strong>${discard}</strong><br>向听数：${shanten}<br>可能役种：${yakuList.join('、')}`
+      : `当前无推荐出牌。向听数：${shanten}`;
+  }, 100);
+}
+
+function calculateShanten(hand) {
+  const tileCount = {};
+  hand.forEach(t => tileCount[t] = (tileCount[t] || 0) + 1);
+  let pairs = 0, sets = 0;
+  for (let t in tileCount) {
+    if (tileCount[t] >= 3) sets++;
+    else if (tileCount[t] === 2) pairs++;
+  }
+  const shanten = 8 - sets * 2 - pairs;
+  return Math.max(0, shanten);
+}
+
+function detectYaku(hand) {
+  const allSameType = hand.every(t => t.endsWith('万')) || hand.every(t => t.endsWith('筒')) || hand.every(t => t.endsWith('索'));
+  const honors = ['东', '南', '西', '北', '中', '发', '白'];
+  const onlyHonors = hand.every(t => honors.includes(t));
+  const honorCount = hand.filter(t => honors.includes(t)).length;
+  const result = [];
+  if (onlyHonors) result.push("字一色");
+  else if (honorCount >= 5) result.push("混老头");
+  if (allSameType) result.push("清一色");
+  return result.length > 0 ? result : ["无明显役种"];
+}
+
+function analyzeAutomatically() {
+  autoAnalyze = true;
+  analyze();
+}
+
+function exportData() {
+  const data = {
+    hand: handTiles,
+    melds: meldGroups
+  };
+  navigator.clipboard.writeText(JSON.stringify(data));
+  alert("已复制到剪贴板！");
+}
+
+function importData() {
+  const json = prompt("粘贴数据：");
+  try {
+    const data = JSON.parse(json);
+    handTiles = data.hand || [];
+    meldGroups = data.melds || [];
+    updateHand();
+    updateMelds();
+  } catch (e) {
+    alert("数据格式错误");
+  }
+}
+
+renderTiles();
+</script>
+</body>
+</html>
